@@ -11,8 +11,14 @@
 </head>
 <body>
 
+    <div id="loading-screen" class="card center-content">
+        <div class="loader"></div>
+        <h2>App laden...</h2>
+        <p>Even geduld a.u.b.</p>
+    </div>
+
     <div id="install-instructions" class="card hidden">
-        <h1>📲 Installeer de App</h1>
+        <h1>憧 Installeer de App</h1>
         <p>Voeg deze app toe aan je startscherm om meldingen te kunnen ontvangen.</p>
         <div id="ios-instructions" class="hidden">
             <p>Tik onderaan op het <strong>delen-icoon</strong> en kies <strong>'Zet op beginscherm'</strong>.</p>
@@ -20,20 +26,22 @@
     </div>
 
     <div id="permission-section" class="card hidden">
-        <h1>🔔 Meldingen</h1>
-        <p>Zet nu je meldingen aan om updates te ontvangen.</p>
-        <button id="enable-btn" class="btn-primary">Meld je aan voor meldingen</button>
+        <h1>粕 Meldingen</h1>
+        <p>Zet meldingen aan voor updates.</p>
+        <button id="enable-btn" class="btn-primary">Meld je aan</button>
+        <button onclick="forceHomepage()" class="btn-logout" style="margin-top:15px;">Nu niet</button>
     </div>
 
     <div id="homepage" class="hidden">
         <div class="card">
             <div class="header-flex">
-                <h2 style="margin:0;">🏠 Welkom</h2>
-                </div>
+                <h2 style="margin:0;">匠 Welkom</h2>
+            </div>
+            <p>Hier verschijnen je meldingen.</p>
         </div>
 
         <div class="card">
-            <h2>📜 Geschiedenis</h2>
+            <h2>糖 Geschiedenis</h2>
             <p id="no-msg">Geen berichten gevonden.</p>
             <ul id="history-list"></ul>
             <button onclick="clearHistory()" class="btn-danger">Wissen</button>
@@ -42,59 +50,88 @@
 
     <script>
         const ONESIGNAL_APP_ID = "34b6e89d-0d33-405e-8ee4-76ef90fa699a";
+        let appIsReady = false;
 
-        // Start direct met de controle zodra de pagina geladen is
+        // --- VEILIGHEIDS TIMER ---
+        // Als de app na 4 seconden nog niet geladen is, forceer dan de homepage.
+        setTimeout(() => {
+            if (!appIsReady) {
+                console.log("OneSignal duurde te lang, app wordt geforceerd geopend.");
+                checkAccess(true); // Forceer check
+            }
+        }, 4000);
+
         window.onload = () => {
-            checkAccess();
+            // Start normaal
+            checkAccess(false);
         };
 
-        // --- FLOW CONTROLE ---
-        function checkAccess() {
-            // Controleer of de app op het startscherm staat (PWA mode)
+        function checkAccess(force) {
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
             
+            // Als we niet in app-modus zitten, toon installatie-instructies
             if (!isStandalone) {
                 showSection('install-instructions');
                 if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
                     document.getElementById('ios-instructions').classList.remove('hidden');
                 }
             } else {
-                initOneSignal();
-            }
-        }
-
-        // --- ONESIGNAL ---
-        function initOneSignal() {
-            window.OneSignalDeferred = window.OneSignalDeferred || [];
-            OneSignalDeferred.push(async function(OneSignal) {
-                await OneSignal.init({ appId: ONESIGNAL_APP_ID });
-
-                const isOptedIn = OneSignal.User.PushSubscription.optedIn;
-                const permission = Notification.permission;
-
-                if (isOptedIn || permission === "granted") {
+                // We zitten in de app. Probeer OneSignal, of forceer als het te lang duurt.
+                if (force) {
                     showSection('homepage');
                     loadFromDB();
                 } else {
-                    showSection('permission-section');
+                    initOneSignal();
                 }
-            });
+            }
+        }
+
+        function initOneSignal() {
+            window.OneSignalDeferred = window.OneSignalDeferred || [];
+            
+            try {
+                OneSignalDeferred.push(async function(OneSignal) {
+                    await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+                    
+                    // Check status
+                    const isOptedIn = OneSignal.User.PushSubscription.optedIn;
+                    const permission = Notification.permission;
+
+                    if (isOptedIn || permission === "granted") {
+                        showSection('homepage');
+                        loadFromDB();
+                    } else {
+                        showSection('permission-section');
+                    }
+                });
+            } catch (error) {
+                console.error("OneSignal Fout:", error);
+                showSection('homepage'); // Bij fout toch openen
+            }
         }
 
         document.getElementById('enable-btn').addEventListener('click', () => {
             OneSignalDeferred.push(async (OneSignal) => {
                 await OneSignal.Slidedown.promptPush();
-                
+                // Wacht even en check dan permissie
                 setTimeout(() => {
                     if (Notification.permission === "granted") {
                         showSection('homepage');
                         loadFromDB();
                     }
-                }, 2000);
+                }, 1500);
             });
         });
 
+        function forceHomepage() {
+            showSection('homepage');
+            loadFromDB();
+        }
+
         function showSection(id) {
+            appIsReady = true; // Timer stopt nu met tellen
+            document.getElementById('loading-screen').style.display = 'none';
+
             ['install-instructions', 'permission-section', 'homepage'].forEach(s => {
                 const el = document.getElementById(s);
                 if (el) el.classList.add('hidden');
@@ -102,26 +139,28 @@
             document.getElementById(id).classList.remove('hidden');
         }
 
-        // --- DATABASE LOGICA (Ongewijzigd) ---
+        // --- DATABASE LOGICA ---
         function loadFromDB() {
-            const request = indexedDB.open("NotificationHistory", 1);
-            request.onupgradeneeded = (e) => {
-                e.target.result.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
-            };
-            request.onsuccess = (e) => {
-                const db = e.target.result;
-                const transaction = db.transaction("messages", "readonly");
-                const store = transaction.objectStore("messages");
-                const getAll = store.getAll();
-                getAll.onsuccess = () => renderHistory(getAll.result.reverse());
-            };
+            try {
+                const request = indexedDB.open("NotificationHistory", 1);
+                request.onupgradeneeded = (e) => {
+                    e.target.result.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
+                };
+                request.onsuccess = (e) => {
+                    const db = e.target.result;
+                    const transaction = db.transaction("messages", "readonly");
+                    const store = transaction.objectStore("messages");
+                    const getAll = store.getAll();
+                    getAll.onsuccess = () => renderHistory(getAll.result.reverse());
+                };
+            } catch(e) { console.log("DB Error", e); }
         }
 
         function renderHistory(history) {
             const list = document.getElementById('history-list');
             const noMsg = document.getElementById('no-msg');
             list.innerHTML = '';
-            if (history.length > 0) {
+            if (history && history.length > 0) {
                 noMsg.style.display = 'none';
                 history.forEach(item => {
                     let li = document.createElement('li');
