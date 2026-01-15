@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Roostermeldingen</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+</head>
+<body>
+
+    <div id="install-instructions" class="card hidden">
+        <h1>📲 Installeer de App</h1>
+        <p>Voeg deze app toe aan je startscherm om meldingen te kunnen ontvangen.</p>
+        <div id="ios-instructions" class="hidden">
+            <p>Tik onderaan op het <strong>delen-icoon</strong> en kies <strong>'Zet op beginscherm'</strong>.</p>
+        </div>
+    </div>
+
+    <div id="permission-section" class="card hidden">
+        <h1>🔔 Meldingen</h1>
+        <p>Zet nu je meldingen aan om updates te ontvangen.</p>
+        <button id="enable-btn" class="btn-primary">Meld je aan voor meldingen</button>
+    </div>
+
+    <div id="homepage" class="hidden">
+        <div class="card">
+            <div class="header-flex">
+                <h2 style="margin:0;">🏠 Welkom</h2>
+                </div>
+        </div>
+
+        <div class="card">
+            <h2>📜 Geschiedenis</h2>
+            <p id="no-msg">Geen berichten gevonden.</p>
+            <ul id="history-list"></ul>
+            <button onclick="clearHistory()" class="btn-danger">Wissen</button>
+        </div>
+    </div>
+
+    <script>
+        const ONESIGNAL_APP_ID = "34b6e89d-0d33-405e-8ee4-76ef90fa699a";
+
+        // Start direct met de controle zodra de pagina geladen is
+        window.onload = () => {
+            checkAccess();
+        };
+
+        // --- FLOW CONTROLE ---
+        function checkAccess() {
+            // Controleer of de app op het startscherm staat (PWA mode)
+            const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+            
+            if (!isStandalone) {
+                showSection('install-instructions');
+                if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                    document.getElementById('ios-instructions').classList.remove('hidden');
+                }
+            } else {
+                initOneSignal();
+            }
+        }
+
+        // --- ONESIGNAL ---
+        function initOneSignal() {
+            window.OneSignalDeferred = window.OneSignalDeferred || [];
+            OneSignalDeferred.push(async function(OneSignal) {
+                await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+
+                const isOptedIn = OneSignal.User.PushSubscription.optedIn;
+                const permission = Notification.permission;
+
+                if (isOptedIn || permission === "granted") {
+                    showSection('homepage');
+                    loadFromDB();
+                } else {
+                    showSection('permission-section');
+                }
+            });
+        }
+
+        document.getElementById('enable-btn').addEventListener('click', () => {
+            OneSignalDeferred.push(async (OneSignal) => {
+                await OneSignal.Slidedown.promptPush();
+                
+                setTimeout(() => {
+                    if (Notification.permission === "granted") {
+                        showSection('homepage');
+                        loadFromDB();
+                    }
+                }, 2000);
+            });
+        });
+
+        function showSection(id) {
+            ['install-instructions', 'permission-section', 'homepage'].forEach(s => {
+                const el = document.getElementById(s);
+                if (el) el.classList.add('hidden');
+            });
+            document.getElementById(id).classList.remove('hidden');
+        }
+
+        // --- DATABASE LOGICA (Ongewijzigd) ---
+        function loadFromDB() {
+            const request = indexedDB.open("NotificationHistory", 1);
+            request.onupgradeneeded = (e) => {
+                e.target.result.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
+            };
+            request.onsuccess = (e) => {
+                const db = e.target.result;
+                const transaction = db.transaction("messages", "readonly");
+                const store = transaction.objectStore("messages");
+                const getAll = store.getAll();
+                getAll.onsuccess = () => renderHistory(getAll.result.reverse());
+            };
+        }
+
+        function renderHistory(history) {
+            const list = document.getElementById('history-list');
+            const noMsg = document.getElementById('no-msg');
+            list.innerHTML = '';
+            if (history.length > 0) {
+                noMsg.style.display = 'none';
+                history.forEach(item => {
+                    let li = document.createElement('li');
+                    li.className = 'notif-item';
+                    li.innerHTML = `<strong>${item.title}</strong><br>${item.body}<span class="notif-time">${item.time}</span>`;
+                    list.appendChild(li);
+                });
+            } else {
+                noMsg.style.display = 'block';
+            }
+        }
+
+        function clearHistory() {
+            const request = indexedDB.open("NotificationHistory", 1);
+            request.onsuccess = (e) => {
+                const db = e.target.result;
+                const transaction = db.transaction("messages", "readwrite");
+                transaction.objectStore("messages").clear();
+                renderHistory([]);
+            };
+        }
+    </script>
+</body>
+</html>
