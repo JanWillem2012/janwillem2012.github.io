@@ -1,6 +1,5 @@
 importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");
 
-// Luister naar binnenkomende notificaties
 self.addEventListener('push', function(event) {
     if (!(self.Notification && self.Notification.permission === 'granted')) return;
 
@@ -8,7 +7,6 @@ self.addEventListener('push', function(event) {
     const title = data.title || "Nieuw bericht";
     const message = data.alert || data.body || "Je hebt een melding ontvangen";
 
-    // Sla de melding op in IndexedDB zodat de app het later kan lezen
     const request = indexedDB.open("NotificationHistory", 1);
     request.onupgradeneeded = (e) => {
         e.target.result.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
