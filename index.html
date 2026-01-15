@@ -13,8 +13,7 @@
 
     <div id="loading-screen" class="card center-content">
         <div class="loader"></div>
-        <h2>App laden...</h2>
-        <p>Even geduld a.u.b.</p>
+        <h2>Laden...</h2>
     </div>
 
     <div id="install-instructions" class="card hidden">
@@ -37,7 +36,7 @@
             <div class="header-flex">
                 <h2 style="margin:0;">匠 Welkom</h2>
             </div>
-            <p>Hier verschijnen je meldingen.</p>
+            <p>Je rooster updates verschijnen hier.</p>
         </div>
 
         <div class="card">
@@ -53,69 +52,89 @@
         let appIsReady = false;
 
         // --- VEILIGHEIDS TIMER ---
-        // Als de app na 4 seconden nog niet geladen is, forceer dan de homepage.
+        // We verlagen de nood-timer naar 2.5 seconden voor nieuwe gebruikers
         setTimeout(() => {
             if (!appIsReady) {
-                console.log("OneSignal duurde te lang, app wordt geforceerd geopend.");
-                checkAccess(true); // Forceer check
+                console.log("Timer verlopen, forceer start.");
+                checkAccess(true); 
             }
-        }, 4000);
+        }, 2500);
 
         window.onload = () => {
-            // Start normaal
             checkAccess(false);
         };
 
         function checkAccess(force) {
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
             
-            // Als we niet in app-modus zitten, toon installatie-instructies
             if (!isStandalone) {
+                // Niet in app modus -> Toon installatie instructies
                 showSection('install-instructions');
                 if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
                     document.getElementById('ios-instructions').classList.remove('hidden');
                 }
             } else {
-                // We zitten in de app. Probeer OneSignal, of forceer als het te lang duurt.
-                if (force) {
+                // Wel in app modus -> SNELLE CHECK
+                
+                // 1. Check of we al weten dat we toestemming hebben (Supersnel laden)
+                const localPerm = localStorage.getItem('local_permission');
+                
+                if (localPerm === 'granted' && !force) {
+                    console.log("Snelle start via lokale cache");
                     showSection('homepage');
                     loadFromDB();
+                    // Start OneSignal stil in de achtergrond
+                    initOneSignal(true); 
                 } else {
-                    initOneSignal();
+                    // 2. Eerste keer? Dan moeten we wachten op OneSignal
+                    if (force) {
+                        showSection('homepage');
+                        loadFromDB();
+                    } else {
+                        initOneSignal(false);
+                    }
                 }
             }
         }
 
-        function initOneSignal() {
+        function initOneSignal(isBackgroundLoad) {
             window.OneSignalDeferred = window.OneSignalDeferred || [];
             
             try {
                 OneSignalDeferred.push(async function(OneSignal) {
                     await OneSignal.init({ appId: ONESIGNAL_APP_ID });
                     
-                    // Check status
                     const isOptedIn = OneSignal.User.PushSubscription.optedIn;
                     const permission = Notification.permission;
 
+                    // Update de lokale cache voor de volgende keer
                     if (isOptedIn || permission === "granted") {
-                        showSection('homepage');
-                        loadFromDB();
+                        localStorage.setItem('local_permission', 'granted');
+                        
+                        // Als we nog aan het laden waren (niet background), toon dan nu de home
+                        if (!isBackgroundLoad) {
+                            showSection('homepage');
+                            loadFromDB();
+                        }
                     } else {
-                        showSection('permission-section');
+                        localStorage.removeItem('local_permission'); // Geen toestemming meer
+                        if (!isBackgroundLoad) {
+                            showSection('permission-section');
+                        }
                     }
                 });
             } catch (error) {
-                console.error("OneSignal Fout:", error);
-                showSection('homepage'); // Bij fout toch openen
+                console.error("OneSignal fout:", error);
+                if (!isBackgroundLoad) showSection('homepage');
             }
         }
 
         document.getElementById('enable-btn').addEventListener('click', () => {
             OneSignalDeferred.push(async (OneSignal) => {
                 await OneSignal.Slidedown.promptPush();
-                // Wacht even en check dan permissie
                 setTimeout(() => {
                     if (Notification.permission === "granted") {
+                        localStorage.setItem('local_permission', 'granted'); // Opslaan!
                         showSection('homepage');
                         loadFromDB();
                     }
@@ -124,12 +143,15 @@
         });
 
         function forceHomepage() {
+            localStorage.setItem('local_permission', 'granted'); // Zodat hij volgende keer snel start
             showSection('homepage');
             loadFromDB();
         }
 
         function showSection(id) {
-            appIsReady = true; // Timer stopt nu met tellen
+            if (appIsReady && id === 'homepage') return; // Voorkom dubbel laden
+            appIsReady = true; 
+            
             document.getElementById('loading-screen').style.display = 'none';
 
             ['install-instructions', 'permission-section', 'homepage'].forEach(s => {
